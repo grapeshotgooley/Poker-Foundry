@@ -6,10 +6,23 @@
 
 ## ⚙️ Features
 
-- Live tracking of player actions and hand histories  
-- HUD overlay with inferred opponent behavior  
-- Real-time hand and session data logging  
-- Built with Selenium and PokerPy for powerful scraping and data analysis  
+### 🧠 Foundry Engine
+Extracts and tracks real-time hand and street data from Poker Now using Selenium. Compiles it into structured JSON for live tool updates and post-hand analysis.
+
+### 💻 Foundry Overlay
+A PySide-based UI that surrounds the Poker Now browser with dynamic stat windows and tool interfaces, powered by Selenium and ChromeDriver.
+
+### 🎲 Open-Fold Suggester
+Uses preflop strategy trees to recommend folds or opens. Includes a fun “special hand” toggle for custom strategies like the 7-2 game.
+
+### 📏 Bet Sizer
+Displays stack-to-pot ratio (SPR) and a suggested bet size using board texture, position, and randomization logic.
+
+### 📊 Odds Calculator
+Simulates win % between your hand and a selected opponent hand using multiprocessing, NumPy, and a custom hand-ranking library for fast calculations.
+
+### 👁️ Villain Stat Tracker
+Analyzes opponent behavior based on hand history. Provides real-time labels (e.g., Loose-Aggressive, Tilted) and auto-expands stats when heads-up.
 
 ---
 
