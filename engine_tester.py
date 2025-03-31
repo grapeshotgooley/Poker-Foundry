@@ -7,7 +7,7 @@ from datetime import datetime
 import re
 
 # Setup Chrome
-service = Service("C:\\Users\\goole\\OneDrive\\Desktop\\berryshot\\chromedriver-win64\\chromedriver.exe")
+service = Service(".\\chromedriver-win64\\chromedriver.exe")
 options = Options()
 options.add_argument("--start-maximized")
 driver = webdriver.Chrome(service=service, options=options)

@@ -6,7 +6,7 @@ import time
 import re
 
 # Setup
-service = Service("C:\\Users\\goole\\OneDrive\\Desktop\\berryshot\\chromedriver-win64\\chromedriver.exe")
+service = Service(".\\chromedriver-win64\\chromedriver.exe")
 options = Options()
 options.add_argument("--start-maximized")
 driver = webdriver.Chrome(service=service, options=options)
@@ -64,3 +64,5 @@ try:
 except KeyboardInterrupt:
     print("🛑 Stopped by user.")
     driver.quit()
+
+
