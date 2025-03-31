@@ -77,4 +77,4 @@ This project is currently under active development. Contributions and testing fe
 
 ## 📬 Contact
 
-Questions? Ideas? Open an issue or email the maintainer.
+Questions? Ideas? Go to https://gooley.net to contact the developers.
