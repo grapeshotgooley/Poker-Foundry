@@ -65,7 +65,7 @@ Ensure that `chromedriver.exe` is accessible from your system PATH or within the
 
 ## 📄 License
 
-_**Reminder:** Apache 2 (look more into this)
+**Reminder:** Apache 2 (look more into this)
 
 ---
 
