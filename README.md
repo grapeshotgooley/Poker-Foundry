@@ -52,7 +52,7 @@ Ensure that `chromedriver.exe` is accessible from your system PATH or within the
 
 ## 📄 License
 
-_**Reminder:** Add your preferred software license here (e.g., MIT, GPL-3.0, etc.)_
+_**Reminder:** Apache 2 (look more into this)
 
 ---
 
