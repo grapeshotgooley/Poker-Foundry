@@ -16,7 +16,6 @@ class FoundryOverlay(QMainWindow):
         screen_width = screen.width()
         screen_height = screen.height()
         # Define light and dark theme styles
-        # Define light and dark theme styles
         self.light_theme = """
                QMainWindow {
                    background-color: white;
