@@ -32,7 +32,7 @@ Analyzes opponent behavior based on hand history. Provides real-time labels (e.g
 
 ```bash
 pip install git+https://github.com/glpcc/PokerPy
-pip install PyQt6 PyQt6-WebEngine
+pip install PyQt6 PyQt6-WebEngine numpy
 ```
 
 > **Note**: You must have `git` and `Microsoft Visual C++ 14.0 or greater` installed on your machine.
