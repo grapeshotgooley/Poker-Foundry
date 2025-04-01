@@ -14,6 +14,7 @@ driver = webdriver.Chrome(service=service, options=options)
 
 driver.get("https://www.pokernow.club/start-game")
 time.sleep(5)
+# this test
 
 last_state = ""
 last_actions = {}
