@@ -12,7 +12,9 @@ options = Options()
 options.add_argument("--start-maximized")
 driver = webdriver.Chrome(service=service, options=options)
 
-driver.get("https://www.pokernow.club/start-game")
+#driver.get("https://www.pokernow.club/start-game")
+driver.get("https://www.pokernow.club/games/pglz6eNyqWKKcqKI1f2dMw-sV")
+
 time.sleep(5)
 
 last_state = ""
@@ -86,7 +88,12 @@ def get_player_action(player, highest_bet):
     except:
         return "Check"
 
+# Persistent variable to store the last dealer's seat index
+last_dealer_seat = None
+
+
 def get_dealer_seat_and_name():
+    global last_dealer_seat  # Access the global variable to track the dealer seat
     try:
         dealer_els = driver.find_elements(By.CSS_SELECTOR, ".dealer-button-ctn")
         if not dealer_els:
@@ -109,8 +116,17 @@ def get_dealer_seat_and_name():
                         name = name_el.text.strip()
                         if not name:
                             name = name_el.find_element(By.CSS_SELECTOR, "a").text.strip()
+
+                        # Check for dealer change
+                        if last_dealer_seat != seat_index:
+                            print(f"🔄 New dealer for the hand: {name} (Seat {seat_index})")
+                            last_dealer_seat = seat_index  # Update the last dealer seat
+
                         return seat_index, name
                     except:
+                        if last_dealer_seat != seat_index:
+                            print(f"🔄 New dealer for the hand: (no name) (Seat {seat_index})")
+                            last_dealer_seat = seat_index  # Update the last dealer seat
                         return seat_index, "(no name)"
         return None, None
     except Exception as e:
