@@ -115,7 +115,7 @@ def should_play_hand(
 # 🧪 Test
 if __name__ == "__main__":
     test_cases = [
-        ("78s", "utg", False, "", False),     # from range
+        ("78s", "utg", True, "72", False),     # from range
     ]
 
     for hand, pos, special_on, special_hand, suited_only in test_cases:

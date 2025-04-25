@@ -12,8 +12,7 @@ options = Options()
 options.add_argument("--start-maximized")
 driver = webdriver.Chrome(service=service, options=options)
 
-#driver.get("https://www.pokernow.club/start-game")
-driver.get("https://www.pokernow.club/games/pglz6eNyqWKKcqKI1f2dMw-sV")
+driver.get("https://www.pokernow.club/start-game")
 
 time.sleep(5)
 

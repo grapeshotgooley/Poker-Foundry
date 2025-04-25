@@ -1,7 +1,7 @@
 # 🃏 The Poker Foundry
 
 **The Poker Foundry** is an advanced HUD (Heads-Up Display) and data analysis tool built for [PokerNow.com](https://www.pokernow.club/). It leverages real-time scraping and game state tracking to enhance decision-making for online poker games.
-
+[![Watch the video](https://img.youtube.com/vi/TnOleSkJUdI/0.jpg)](https://www.youtube.com/watch?v=TnOleSkJUdI)
 ---
 
 ## ⚙️ Features
