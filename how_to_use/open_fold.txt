@@ -1,0 +1,5 @@
+How to Use
+The Open-Fold Suggester analyzes your current hand and recommends whether to open or fold preflop when the pot is unopened. If you have a favorite hand or are playing a variant like 7-2, you can check Special Hand to always include it in your range. Use Suited Only to limit your opening range to suited versions of that hand.
+
+How It’s Calculated
+The suggester uses slightly adjusted preflop charts optimized for exploitation, then applies randomization to generate recommendations. If Special Hand is enabled, it shifts your range strategically to include that hand while maintaining a near-optimal balance and minimizing exploitability—particularly in 7-2 games. These charts are adapted for 100BB+ (deep stack) cash game NLH. For games with lower stack depth remember that tighter more aggressive strategies are better.

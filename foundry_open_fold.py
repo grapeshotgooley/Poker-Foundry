@@ -23,7 +23,7 @@ def normalize_hand(hand: str) -> str:
             return r1 + r2
         return r1 + r2 + suitedness if rank_value(r1) > rank_value(r2) else r2 + r1 + suitedness
 
-    raise ValueError(f"Invalid hand format: '{hand}'. Expected formats like 'AKs', 'QQ', 'JTo'.")
+    raise ValueError(f"INVALID")
 
 def get_range_action(hand: str, position: str) -> str:
     try:

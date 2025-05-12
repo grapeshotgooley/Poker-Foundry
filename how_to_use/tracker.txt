@@ -1,0 +1,5 @@
+How to Use
+Select a player from the dropdown to view their stats, with your own stats displayed at the top. The tracker provides key preflop and postflop tendencies, including VPIP%, which measures how often a player voluntarily puts money into the pot, and PFR%, which shows how frequently they raise preflop. It also tracks 3B%, indicating how often they three-bet, and F3B%, which reflects how often they fold to a three-bet. Postflop stats include CBF%, measuring how often a player continuation bets after being the preflop aggressor, and WTSD%, showing how often they go to showdown after seeing the flop.
+
+How It’s Calculated
+At the end of each hand, all player actions are logged and used to update their stats in real time. The data is session-specific, meaning the stats reflect only the hands played during the current session. If a player swaps seats but keeps the same name, the tracker assumes they are the same player.

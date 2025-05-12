@@ -1,0 +1,5 @@
+How to Use
+This tool calculates poker odds, showing your Win % (chance of winning) and Tie % (chance of tying) against an inputted hand. You can quickly populate the opponent’s hand using the Top-Top or Nuts checkboxes, helping you evaluate matchups within their range. If your opponent’s hand is revealed, the input updates automatically.
+
+How It's Calculated
+This tool uses sampling-based approximation rather than full enumeration, introducing slight variance in probability estimates. Accuracy decreases when fewer community cards remain unknown, as the reduced number of possible outcomes makes random sampling less precise.

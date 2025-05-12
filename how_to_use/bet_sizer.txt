@@ -1,0 +1,5 @@
+How to Use
+The Bet Sizer suggests how much to bet in a given situation if you choose to bet, incorporating randomization and always rounding to a whole number. It does not indicate whether you should bet but provides sizing recommendations, including raises. The stack-to-pot ratio (SPR) is the primary factor influencing bet sizing, and it is displayed to help players evaluate both their own and their opponent’s bet sizes more effectively. This tool is less useful in microstakes due to its rounding adjustments. Keep in mind, this tool doesn't examine your hand or the board. In scenarios where the board is more dynamic or you would like to polarize your range more you should select your own bet size.
+
+How It’s Calculated
+Different betting scenarios—such as preflop, postflop, or low SPR spots—use distinct formulas to determine an exact bet size. Once the bet is calculated, a differential formula introduces slight randomization, making your bets less predictable and harder for opponents to exploit. The final suggested bet reflects this adjustment, ensuring a more balanced and deceptive betting strategy.
