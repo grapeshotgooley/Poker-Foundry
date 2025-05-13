@@ -8,6 +8,9 @@ from PyQt6.QtCore import Qt, QUrl, QTimer
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
 from foundry_open_fold import *
+from foundry_calculator import *
+from foundry_bet_sizer import *
+from foundry_tracker import *
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,6 +50,7 @@ class FoundryOverlay(QMainWindow):
     def __init__(self):
         super().__init__()
         self.last_suggestion_args = None
+        self.last_revealed_hands = {}
 
         screen = QApplication.primaryScreen().geometry()
         screen_width, screen_height = screen.width(), screen.height()
@@ -174,24 +178,64 @@ class FoundryOverlay(QMainWindow):
         open_fold_layout.addWidget(self.suited_checkbox)
         button_layout_left.addWidget(open_fold_container, 1)
 
+        # CALCULATOR SECTION
         with open('./how_to_use/calculator.txt', 'r', encoding='utf-8') as f:
             calculator_text = f.read()
         calculator_container, calculator_layout = create_section("Calculator", calculator_text)
-        calculator_input = QLineEdit()
-        calculator_input.setPlaceholderText("Enter hand")
-        calculator_input.setMaxLength(4)
-        calculator_input.setStyleSheet("font-size: 16px; text-align: center;")
-        calculator_input.textChanged.connect(lambda text: GLOBAL_STATE.update({"calculator_input": text}))
 
+        # Input field
+        self.calculator_input = QLineEdit()
+        self.calculator_input.setPlaceholderText("Enter hand")
+        self.calculator_input.setMaxLength(4)
+        self.calculator_input.setStyleSheet("font-size: 16px; text-align: center;")
+
+        def on_calculator_input_changed(text):
+            GLOBAL_STATE["calculator_input"] = text
+            if text.strip():
+                self.top_top_checkbox.blockSignals(True)
+                self.nuts_checkbox.blockSignals(True)
+                self.top_top_checkbox.setChecked(False)
+                self.nuts_checkbox.setChecked(False)
+                self.top_top_checkbox.blockSignals(False)
+                self.nuts_checkbox.blockSignals(False)
+
+        self.calculator_input.textChanged.connect(on_calculator_input_changed)
+
+        # Top-Top Checkbox
         self.top_top_checkbox = QCheckBox("Top-Top")
         self.top_top_checkbox.setStyleSheet("font-size: 16px; text-align: center;")
-        self.top_top_checkbox.stateChanged.connect(lambda state: GLOBAL_STATE.update({"top_top": state == Qt.CheckState.Checked.value}))
 
+        def on_top_top_checked(state):
+            is_checked = state == Qt.CheckState.Checked.value
+            GLOBAL_STATE["top_top"] = is_checked
+            if is_checked:
+                self.nuts_checkbox.blockSignals(True)
+                self.nuts_checkbox.setChecked(False)
+                self.nuts_checkbox.blockSignals(False)
+                self.calculator_input.blockSignals(True)
+                self.calculator_input.setText("")
+                self.calculator_input.blockSignals(False)
+
+        self.top_top_checkbox.stateChanged.connect(on_top_top_checked)
+
+        # Nuts Checkbox
         self.nuts_checkbox = QCheckBox("Nuts")
         self.nuts_checkbox.setStyleSheet("font-size: 16px; text-align: center;")
-        self.nuts_checkbox.stateChanged.connect(lambda state: GLOBAL_STATE.update({"nuts": state == Qt.CheckState.Checked.value}))
 
-        calculator_layout.addWidget(calculator_input)
+        def on_nuts_checked(state):
+            is_checked = state == Qt.CheckState.Checked.value
+            GLOBAL_STATE["nuts"] = is_checked
+            if is_checked:
+                self.top_top_checkbox.blockSignals(True)
+                self.top_top_checkbox.setChecked(False)
+                self.top_top_checkbox.blockSignals(False)
+                self.calculator_input.blockSignals(True)
+                self.calculator_input.setText("")
+                self.calculator_input.blockSignals(False)
+
+        self.nuts_checkbox.stateChanged.connect(on_nuts_checked)
+
+        calculator_layout.addWidget(self.calculator_input)
         calculator_layout.addWidget(self.top_top_checkbox)
         calculator_layout.addWidget(self.nuts_checkbox)
         calculator_layout.addLayout(self.create_sizer_row("WIN %:", GLOBAL_STATE["win_percent"]))
@@ -231,7 +275,7 @@ class FoundryOverlay(QMainWindow):
         # Polling Timer
         self.timer = QTimer()
         self.timer.timeout.connect(self.poll_game_state)
-        self.timer.start(500)  # every .5 seconds
+        self.timer.start(300)  # every .3 seconds
 
     def poll_game_state(self):
         js_code_hand = """
@@ -251,8 +295,35 @@ class FoundryOverlay(QMainWindow):
         def handle_hand_result(hand):
             self.browser.page().runJavaScript(self.get_players_js(),
                                               lambda players: self.display_hero_hand(hand, players))
+            self.browser.page().runJavaScript(self.get_revealed_opponent_js(), self.display_opponent_hands)
 
         self.browser.page().runJavaScript(js_code_hand, handle_hand_result)
+
+    def get_revealed_opponent_js(self):
+        return """
+        (() => {
+            const players = document.querySelectorAll('.table-player');
+            const revealedOpponents = [];
+
+            players.forEach(player => {
+                if (player.classList.contains('you-player')) return;
+
+                const cards = player.querySelectorAll('.card-container.flipped .card');
+                if (cards.length !== 2) return;
+
+                const hand = [...cards].map(card => {
+                    const val = card.querySelector('.value')?.innerText.trim() || "";
+                    const suit = card.querySelector('.suit')?.innerText.trim() || "";
+                    return val + suit;
+                });
+
+                const name = player.querySelector('.table-player-name a')?.innerText || "Unknown";
+                revealedOpponents.push({ name, hand });
+            });
+
+            return revealedOpponents;
+        })()
+        """
 
     def get_players_js(self):
         return """
@@ -334,6 +405,39 @@ class FoundryOverlay(QMainWindow):
 
         hero_position = next((p["position"] for p in players if p.get("isHero")), "Unknown")
         return hero_position.lower()
+
+    def display_opponent_hands(self, hands):
+        if not hasattr(self, "last_revealed_hands"):
+            self.last_revealed_hands = {}
+
+        if not hands:
+            return
+
+        for player in hands:
+            try:
+                name = player.get("name", "Unknown")
+                cards_list = player.get("hand", [])
+                cards_str = " ".join(cards_list)
+
+                # Only act if the hand is new or changed
+                if self.last_revealed_hands.get(name) != cards_str:
+                    logging.info(f"{name} revealed: {cards_str}")
+                    self.last_revealed_hands[name] = cards_str
+
+                    # ✅ Normalize to all caps and convert 10 to T
+                    def normalize(card):
+                        rank, suit = card[:-1], card[-1]
+                        rank = 'T' if rank == '10' else rank.upper()
+                        suit = suit.upper()
+                        return rank + suit
+
+                    normalized = [normalize(card) for card in cards_list]
+                    condensed = "".join(normalized)  # e.g., AHTD
+                    GLOBAL_STATE["calculator_input"] = condensed
+                    self.calculator_input.setText(condensed)
+
+            except Exception as e:
+                logging.error(f"Error processing opponent hand: {e}")
 
     def display_hero_hand(self, hand, players):
         if not hand or len(hand) != 2:
