@@ -24,10 +24,12 @@ GLOBAL_STATE = {
     "special_hand_enabled": False,
     "special_hand_value": "",
     "suited_only": False,
+    "hero_hand": "",
     "calculator_input": "",
     "top_top": False,
     "nuts": False,
     "selected_player": "",
+    "community_cards": "",
     "stats": {
         "VPIP": "0.0",
         "PFR": "0.0",
@@ -36,15 +38,12 @@ GLOBAL_STATE = {
         "CBF": "0.0",
         "WTSD": "0.0"
     },
-    "win_percent": ".000",
-    "tie_percent": ".000",
+    "win_percent": "0.00",
+    "tie_percent": "0.00",
     "suggestion": "FOLD",
     "spr": "0.0",
     "bet_size": "0"
 }
-
-
-
 
 class FoundryOverlay(QMainWindow):
     def __init__(self):
@@ -198,6 +197,7 @@ class FoundryOverlay(QMainWindow):
                 self.nuts_checkbox.setChecked(False)
                 self.top_top_checkbox.blockSignals(False)
                 self.nuts_checkbox.blockSignals(False)
+            self.on_calculator_change()  # ✅ Added
 
         self.calculator_input.textChanged.connect(on_calculator_input_changed)
 
@@ -215,6 +215,7 @@ class FoundryOverlay(QMainWindow):
                 self.calculator_input.blockSignals(True)
                 self.calculator_input.setText("")
                 self.calculator_input.blockSignals(False)
+            self.on_calculator_change()  # ✅ Added
 
         self.top_top_checkbox.stateChanged.connect(on_top_top_checked)
 
@@ -232,6 +233,7 @@ class FoundryOverlay(QMainWindow):
                 self.calculator_input.blockSignals(True)
                 self.calculator_input.setText("")
                 self.calculator_input.blockSignals(False)
+            self.on_calculator_change()
 
         self.nuts_checkbox.stateChanged.connect(on_nuts_checked)
 
@@ -275,7 +277,7 @@ class FoundryOverlay(QMainWindow):
         # Polling Timer
         self.timer = QTimer()
         self.timer.timeout.connect(self.poll_game_state)
-        self.timer.start(300)  # every .3 seconds
+        self.timer.start(500)  # every .5 seconds
 
     def poll_game_state(self):
         js_code_hand = """
@@ -292,12 +294,221 @@ class FoundryOverlay(QMainWindow):
         })()
         """
 
-        def handle_hand_result(hand):
+        def handle_hand_result(hero_hand):
             self.browser.page().runJavaScript(self.get_players_js(),
-                                              lambda players: self.display_hero_hand(hand, players))
+                                              lambda players: self.display_hero_hand(hero_hand, players)
+                                              )
             self.browser.page().runJavaScript(self.get_revealed_opponent_js(), self.display_opponent_hands)
+            self.browser.page().runJavaScript(self.get_community_cards_js(), self.handle_community_cards)
 
         self.browser.page().runJavaScript(js_code_hand, handle_hand_result)
+        self.check_game_type()
+
+    def disable_modules(self):
+        self.special_hand_checkbox.setEnabled(False)
+        self.special_hand_input.setEnabled(False)
+        self.suited_checkbox.setEnabled(False)
+        self.calculator_input.setEnabled(False)
+        self.top_top_checkbox.setEnabled(False)
+        self.nuts_checkbox.setEnabled(False)
+        self.player_selector.setEnabled(False)
+
+    def enable_modules(self):
+        self.special_hand_checkbox.setEnabled(True)
+        self.special_hand_input.setEnabled(self.special_hand_checkbox.isChecked())
+        self.suited_checkbox.setEnabled(self.special_hand_checkbox.isChecked())
+        self.calculator_input.setEnabled(True)
+        self.top_top_checkbox.setEnabled(True)
+        self.nuts_checkbox.setEnabled(True)
+        self.player_selector.setEnabled(True)
+
+    def check_game_type(self):
+        js = """
+        (() => {
+            const typeSpan = document.querySelector('.game-type-ctn .current-type');
+            return typeSpan ? typeSpan.innerText.trim() : '';
+        })()
+        """
+
+        def handle_game_type(result):
+            if result and result != "NLH":
+                self.warning_label.setText(f"❌ Wrong game type: {result}")
+                self.disable_modules()
+            elif result == "NLH":
+                self.warning_label.setText("")
+                self.enable_modules()
+            # else: result is empty → no game loaded yet, do nothing
+
+        self.browser.page().runJavaScript(js, handle_game_type)
+
+    def on_calculator_change(self):
+        try:
+            # --- Safe expand helper ---
+            VALID_RANKS = {"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
+            VALID_SUITS = {"C", "D", "H", "S"}
+
+            def expand(card_str):
+                if len(card_str) == 3 and card_str.startswith("10"):
+                    rank = "10"
+                    suit = card_str[2]
+                elif len(card_str) == 2:
+                    rank = '10' if card_str[0] == 'T' else card_str[0]
+                    suit = card_str[1]
+                else:
+                    return None
+                rank = rank.upper()
+                suit = suit.upper()
+                if rank not in VALID_RANKS or suit not in VALID_SUITS:
+                    return None
+                return rank + suit
+
+            # --- Parse board ---
+            board_raw = GLOBAL_STATE.get("community_cards", "").upper()
+            if len(board_raw) % 2 != 0:
+                logging.warning(f"Invalid community card string: '{board_raw}'")
+                return
+
+            board_strs = [expand(board_raw[i:i + 2]) for i in range(0, len(board_raw), 2)]
+            logging.info(f"Board strings: {board_strs}")
+
+            if any(card is None for card in board_strs):
+                logging.warning(f"Invalid board cards: {board_strs}")
+                GLOBAL_STATE["win_percent"] = "0.00"
+                GLOBAL_STATE["tie_percent"] = "0.00"
+                self.update_dynamic_labels()
+                return
+
+            board = [Card(s) for s in board_strs]
+
+            # --- Suit setup for override logic ---
+            suits_on_board = [s[-1] for s in board_strs if s]
+            all_suits = ["C", "D", "H", "S"]
+            suit_counts = {s: suits_on_board.count(s) for s in all_suits}
+            least_used_suits = sorted(suit_counts.items(), key=lambda x: x[1])
+            min_count = least_used_suits[0][1]
+            least_suits = [s for s, count in least_used_suits if count == min_count]
+
+            def pick_least_used_suit(exclude=None):
+                import random
+                choices = [s for s in least_suits if s != exclude] if exclude else least_suits
+                return random.choice(choices) if choices else random.choice(all_suits)
+
+            villain_strs = None  # default
+
+            # --- Nuts override ---
+            if self.nuts_checkbox.isChecked():
+                logging.info("Nuts mode enabled for villain")
+
+                if board_strs:
+                    try:
+                        best_hole = best_possible_hole_cards(board_strs)
+                        if best_hole:
+                            villain_strs = [best_hole[0].__str__().upper(), best_hole[1].__str__().upper()]
+                            logging.info(f"Best possible villain hole cards: {villain_strs}")
+                        else:
+                            raise ValueError("best_hole was None")
+                    except Exception as e:
+                        logging.warning(f"Nuts fallback due to error: {e}")
+                        villain_strs = [
+                            'A' + pick_least_used_suit(),
+                            'A' + pick_least_used_suit()
+                        ]
+                else:
+                    villain_strs = [
+                        'A' + pick_least_used_suit(),
+                        'A' + pick_least_used_suit()
+                    ]
+                logging.info(f"Overriding villain hand with NUTS: {villain_strs}")
+
+
+            # --- Top-Top override ---
+            elif self.top_top_checkbox.isChecked():
+                logging.info("Top-Top mode enabled for villain")
+
+                if board_strs:
+                    rank_order = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+                    board_ranks = [card[:-1] for card in board_strs]
+
+                    if "A" in board_ranks:
+                        chosen_suit = pick_least_used_suit()
+                        villain_strs = [
+                            'A' + chosen_suit,
+                            'K' + chosen_suit
+                        ]
+                        logging.info(f"Top-Top override with AK suited: {villain_strs}")
+                    else:
+                        top_rank = max(board_ranks, key=lambda r: rank_order.index(r))
+                        villain_strs = [
+                            'A' + pick_least_used_suit(),
+                            top_rank + pick_least_used_suit(exclude='A')
+                        ]
+                        logging.info(f"Top-Top override with A + top board rank: {villain_strs}")
+                else:
+                    villain_strs = [
+                        'A' + pick_least_used_suit(),
+                        'A' + pick_least_used_suit()
+                    ]
+                    logging.info(f"Top-Top override default AA: {villain_strs}")
+
+            # --- Manual calculator input fallback ---
+            if villain_strs is None:
+                raw = GLOBAL_STATE.get("calculator_input", "").upper()
+                if len(raw) != 4:
+                    logging.warning(f"Invalid calculator input length: '{raw}'")
+                    return
+
+                v1, v2 = raw[:2], raw[2:4]
+                villain_strs = [expand(v1), expand(v2)]
+                logging.info(f"Villain strings from input: {villain_strs}")
+
+            # --- Final validation ---
+            if None in villain_strs:
+                logging.warning(f"Invalid villain card detected: {villain_strs}")
+                GLOBAL_STATE["win_percent"] = "0.00"
+                GLOBAL_STATE["tie_percent"] = "0.00"
+                self.update_dynamic_labels()
+                return
+
+            villain = [Card(s) for s in villain_strs]
+
+            # --- Hero parsing ---
+            hero_cards = GLOBAL_STATE.get("hero_hand", [])
+            if not isinstance(hero_cards, list) or len(hero_cards) != 2:
+                logging.warning(f"Invalid hero_hand in GLOBAL_STATE: '{hero_cards}'")
+                return
+
+            hero_strs = [expand(hero_cards[0]), expand(hero_cards[1])]
+            if None in hero_strs:
+                logging.warning(f"Invalid hero cards: {hero_strs}")
+                return
+
+            hero = [Card(s) for s in hero_strs]
+
+            # --- Evaluation ---
+            win = get_hero_win_rate(hero, villain, board)
+            tie = get_hero_tie_rate(hero, villain, board)
+
+            GLOBAL_STATE["win_percent"] = f"{win * 100:.2f}"
+            GLOBAL_STATE["tie_percent"] = f"{tie * 100:.2f}"
+
+            self.update_dynamic_labels()
+            print("calculator change")
+
+        except Exception as e:
+            logging.error(f"Error in on_calculator_change: {e}")
+
+    def get_community_cards_js(self):
+        return """
+        (() => {
+            const cards = document.querySelectorAll('.table-cards.run-1 .card');
+            const result = [...cards].map(card => {
+                const val = card.querySelector('.value')?.innerText.trim() || "";
+                const suit = card.querySelector('.suit')?.innerText.trim() || "";
+                return val + suit;
+            });
+            return result.filter(c => c);
+        })()
+        """
 
     def get_revealed_opponent_js(self):
         return """
@@ -435,9 +646,27 @@ class FoundryOverlay(QMainWindow):
                     condensed = "".join(normalized)  # e.g., AHTD
                     GLOBAL_STATE["calculator_input"] = condensed
                     self.calculator_input.setText(condensed)
+                    self.on_calculator_change()
 
             except Exception as e:
                 logging.error(f"Error processing opponent hand: {e}")
+
+    def handle_community_cards(self, cards):
+        try:
+            def normalize(card):
+                rank, suit = card[:-1], card[-1]
+                rank = 'T' if rank == '10' else rank.upper()
+                suit = suit.upper()
+                return rank + suit
+
+            normalized = [normalize(card) for card in cards]
+            condensed = "".join(normalized)
+
+            if GLOBAL_STATE.get("community_cards") != condensed:
+                GLOBAL_STATE["community_cards"] = condensed
+                self.on_calculator_change()  # ✅ Trigger update
+        except Exception as e:
+            logging.error(f"Error processing community cards: {e}")
 
     def display_hero_hand(self, hand, players):
         if not hand or len(hand) != 2:
@@ -490,6 +719,8 @@ class FoundryOverlay(QMainWindow):
                 result = should_play_hand(*args)
                 suggestion = result.upper()
                 GLOBAL_STATE["suggestion"] = suggestion
+                GLOBAL_STATE["hero_hand"] = [card1.upper(), card2.upper()]
+                self.on_calculator_change()
                 self.update_dynamic_labels()
                 print(f"{condensed_hand} in {pos.upper()} → {suggestion}")
                 self.last_suggestion_args = args
@@ -500,13 +731,17 @@ class FoundryOverlay(QMainWindow):
             GLOBAL_STATE["suggestion"] = "ERROR"
 
     def update_dynamic_labels(self):
+        key_mapping = {
+            "win_%": "win_percent",
+            "tie_%": "tie_percent"
+        }
+
         for key, label in self.dynamic_labels.items():
-            # Try top-level keys
-            if key in GLOBAL_STATE:
-                label.setText(str(GLOBAL_STATE[key]))
-            # Try stats sub-dict
-            elif key.upper() in GLOBAL_STATE.get("stats", {}):
-                label.setText(str(GLOBAL_STATE["stats"][key.upper()]))
+            real_key = key_mapping.get(key, key)  # Remap if needed
+            if real_key in GLOBAL_STATE:
+                label.setText(str(GLOBAL_STATE[real_key]))
+            elif real_key.upper() in GLOBAL_STATE.get("stats", {}):
+                label.setText(str(GLOBAL_STATE["stats"][real_key.upper()]))
 
     def toggle_special_hand_options(self, state):
         checked = state == Qt.CheckState.Checked.value

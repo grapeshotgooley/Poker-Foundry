@@ -1,5 +1,47 @@
 import PokerPy
 from PokerPy import Card, calculate_hand_frequency, get_best_hand
+import eval7
+from itertools import combinations
+
+import eval7
+from itertools import combinations
+
+def best_possible_hole_cards(board_strs):
+    """
+    Returns the best 2-card villain combo given a board like ['QC', '5H', 'AC'].
+    """
+    def normalize(card_str):
+        rank = card_str[:-1]
+        suit = card_str[-1]
+        rank = 'T' if rank == '10' else rank.upper()
+        suit = suit.lower()  # Lowercase suits for eval7
+        return eval7.Card(rank + suit)
+
+    try:
+        board = [normalize(s) for s in board_strs]
+        deck = eval7.Deck()
+
+        # Remove board cards using ascii_representation (e.g., 'Ah', 'Qc')
+        board_ascii = {card.__str__() for card in board}
+        deck.cards = [card for card in deck.cards if str(card) not in board_ascii]
+
+        best_score = -1
+        best_hole = None
+
+        for h1, h2 in combinations(deck.cards, 2):
+            score = eval7.evaluate(board + [h1, h2])
+            if score > best_score:
+                best_score = score
+                best_hole = (h1, h2)
+
+        return best_hole
+
+    except Exception as e:
+        import logging
+        logging.warning(f"Error in best_possible_hole_cards: {e}")
+        return None
+
+
 
 
 def get_hero_win_rate(hero_hand, villain_hand, community_cards=[]):

@@ -99,7 +99,7 @@ def calculate_spr_and_bet(street, hero_stack, villain_stack, pot_size, raises, l
 
 
 # Example usage
-spr, bet = calculate_spr_and_bet('preflop', hero_stack=620, villain_stack=480, pot_size=27, raises=1,
-                                 last_villain_bet=20, big_blind=5, multiway=False, postflop_street='N/A',
-                                 hero_position=1, in_position=False)
-print(f'SPR: {spr:.2f}, Bet Size: {bet}')
+#spr, bet = calculate_spr_and_bet('preflop', hero_stack=620, villain_stack=480, pot_size=27, raises=1,
+#                                 last_villain_bet=20, big_blind=5, multiway=False, postflop_street='N/A',
+#                                 hero_position=1, in_position=False)
+#print(f'SPR: {spr:.2f}, Bet Size: {bet}')
