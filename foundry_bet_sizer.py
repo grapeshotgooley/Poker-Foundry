@@ -31,7 +31,13 @@ def calculate_spr_and_bet(street, hero_stack, villain_stack, pot_size, raises, l
     tuple: (SPR, bet size)
     """
     # Calculate SPR (Stack-to-Pot Ratio)
-    spr = min(hero_stack, villain_stack) / pot_size if pot_size > 0 else 0
+    spr = (
+        min(hero_stack, villain_stack) / pot_size
+        if pot_size > 0 else
+        min(hero_stack, villain_stack) / big_blind
+        if big_blind > 0 else
+        0
+    )
 
     # Jam conditions
     if spr <= 1 or hero_stack <= (12*big_blind):
@@ -57,7 +63,7 @@ def calculate_spr_and_bet(street, hero_stack, villain_stack, pot_size, raises, l
             bet_size = big_blind * truncated_normal((lower + upper) / 2, lower, upper)
         else:
             if raises >= 3:  # 5-bet
-                return spr, round(min(hero_stack, pot_size))  # Min-click or jam
+                return spr, round(min(hero_stack, last_villain_bet))  # Min-click or jam
             elif raises == 2:  # 4-bet
                 lower, upper = (2.2, 3.2)
                 if not in_position:

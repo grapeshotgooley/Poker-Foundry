@@ -25,6 +25,13 @@ GLOBAL_STATE = {
     "special_hand_value": "",
     "suited_only": False,
     "hero_hand": "",
+    "raises": 0,
+    "hero_position": "",
+    "button_seat": None,
+    "hero_stack": 0.0,
+    "pot_size": 0.0,
+    "big_blind": 0.0,
+    "active_players": [],
     "calculator_input": "",
     "top_top": False,
     "nuts": False,
@@ -50,6 +57,10 @@ class FoundryOverlay(QMainWindow):
         super().__init__()
         self.last_suggestion_args = None
         self.last_revealed_hands = {}
+        self.last_villain_bet = 0
+        self.last_board_length = 0
+        self.last_button_seat = None
+        self.last_total_bet = 0
 
         screen = QApplication.primaryScreen().geometry()
         screen_width, screen_height = screen.width(), screen.height()
@@ -300,9 +311,22 @@ class FoundryOverlay(QMainWindow):
                                               )
             self.browser.page().runJavaScript(self.get_revealed_opponent_js(), self.display_opponent_hands)
             self.browser.page().runJavaScript(self.get_community_cards_js(), self.handle_community_cards)
+            self.browser.page().runJavaScript(self.get_hero_stack_js(), self.handle_hero_stack)
+            self.browser.page().runJavaScript(self.get_big_blind_js(), self.handle_big_blind_result)
+            self.browser.page().runJavaScript(self.get_button_seat_js(), self.handle_button_seat)
 
         self.browser.page().runJavaScript(js_code_hand, handle_hand_result)
         self.check_game_type()
+        self.update_bet_sizer()
+        self.get_active_players_js()
+        self.extract_pot_size()
+
+    def handle_hero_stack(self, result):
+        try:
+            stack = float(result.replace(',', '')) if result else 0.0
+            GLOBAL_STATE["hero_stack"] = stack
+        except Exception as e:
+            logging.error(f"Error parsing hero stack: {e}")
 
     def disable_modules(self):
         self.special_hand_checkbox.setEnabled(False)
@@ -322,6 +346,71 @@ class FoundryOverlay(QMainWindow):
         self.nuts_checkbox.setEnabled(True)
         self.player_selector.setEnabled(True)
 
+    def get_big_blind_js(self):
+        return """
+        (() => {
+            const values = document.querySelectorAll('div span.normal-value');
+            if (values.length >= 2) {
+                return parseFloat(values[1].innerText.trim());
+            }
+            return null;
+        })()
+        """
+
+    def get_button_seat_js(self):
+        return """
+        (() => {
+            const btn = document.querySelector('.dealer-button-ctn');
+            if (!btn) return null;
+            const match = btn.className.match(/dealer-position-(\\d+)/);
+            return match ? parseInt(match[1]) : null;
+        })()
+        """
+
+    def get_active_players_js(self):
+        js = """
+        (() => {
+            const results = [];
+            const players = document.querySelectorAll('.table-player');
+            players.forEach((playerDiv, idx) => {
+                const classList = playerDiv.className;
+                const folded = classList.includes('fold');
+                if (folded) return;
+
+                const isHero = classList.includes('you-player');
+                const seatMatch = classList.match(/table-player-(\\d+)/);
+                const seat = seatMatch ? parseInt(seatMatch[1]) : idx + 1;
+
+                const nameTag = playerDiv.querySelector('.table-player-name a');
+                const name = nameTag ? nameTag.innerText.trim() : `Seat ${seat}`;
+
+                const stackTag = playerDiv.querySelector('.table-player-stack .normal-value');
+                const stack = stackTag ? parseFloat(stackTag.innerText.trim()) : 0.0;
+
+                const betTag = playerDiv.querySelector('.table-player-bet-value .normal-value');
+                const lastBet = betTag ? parseFloat(betTag.innerText.trim()) : 0.0;
+
+                results.push({
+                    name,
+                    seat,
+                    stack,
+                    last_bet: lastBet,
+                    is_hero: isHero
+                });
+            });
+            return results;
+        })()
+        """
+        self.browser.page().runJavaScript(js, self.handle_active_players)
+
+    def get_hero_stack_js(self):
+        return """
+        (() => {
+            const stackEl = document.querySelector('.table-player.you-player .table-player-stack .normal-value');
+            return stackEl ? stackEl.innerText.trim() : '';
+        })()
+        """
+
     def check_game_type(self):
         js = """
         (() => {
@@ -340,6 +429,149 @@ class FoundryOverlay(QMainWindow):
             # else: result is empty → no game loaded yet, do nothing
 
         self.browser.page().runJavaScript(js, handle_game_type)
+
+    def handle_button_seat(self, seat_number):
+        if seat_number is not None:
+            GLOBAL_STATE["button_seat"] = seat_number
+            #logging.info(f"Button is at seat {seat_number}")
+        else:
+            logging.warning("Could not determine button seat.")
+
+    def handle_active_players(self, players):
+        if isinstance(players, list):
+            GLOBAL_STATE["active_players"] = players
+            #logging.info("Updated active players:")
+            #for p in players:
+            #    logging.info(p)
+
+    def extract_pot_size(self):
+        js = """
+        (() => {
+            const el = document.querySelector('.table-pot-size .main-value .normal-value');
+            return el ? el.innerText.trim() : null;
+        })()
+        """
+
+        def handle_pot_size(value):
+            try:
+                if value is not None:
+                    GLOBAL_STATE["pot_size"] = float(value)
+                   # print(f"Pot Size: {GLOBAL_STATE['pot_size']}")
+                else:
+                    GLOBAL_STATE["pot_size"] = 0.0
+                  #  print("Pot Size not found.")
+            except Exception as e:
+                logging.error(f"Error extracting pot size: {e}")
+                GLOBAL_STATE["pot_size"] = 0.0
+
+        self.browser.page().runJavaScript(js, handle_pot_size)
+
+    def handle_big_blind_result(self, result):
+        if result is not None:
+            GLOBAL_STATE["big_blind"] = float(result)
+           # print(f"Big Blind set to: {GLOBAL_STATE['big_blind']}")
+        else:
+            logging.warning("Big Blind value not found.")
+
+    def update_bet_sizer(self):
+        # --- Safe expand helper ---
+        VALID_RANKS = {"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
+        VALID_SUITS = {"C", "D", "H", "S"}
+
+        def expand(card_str):
+            if len(card_str) == 3 and card_str.startswith("10"):
+                rank = "10"
+                suit = card_str[2]
+            elif len(card_str) == 2:
+                rank = '10' if card_str[0] == 'T' else card_str[0]
+                suit = card_str[1]
+            else:
+                return None
+            rank = rank.upper()
+            suit = suit.upper()
+            if rank not in VALID_RANKS or suit not in VALID_SUITS:
+                return None
+            return rank + suit
+
+        # --- Parse board ---
+        board_raw = GLOBAL_STATE.get("community_cards", "").upper()
+        if len(board_raw) % 2 != 0:
+            return
+
+        board_strs = [expand(board_raw[i:i + 2]) for i in range(0, len(board_raw), 2)]
+        if any(card is None for card in board_strs):
+            return
+
+        board = [Card(s) for s in board_strs]
+        board_length = len(board)
+        street = "preflop" if board_length == 0 else "postflop"
+
+        hero_stack = GLOBAL_STATE.get('hero_stack', 0.0)
+        active_players = GLOBAL_STATE.get("active_players", [])
+        non_hero_players = [p for p in active_players if not p.get("is_hero")]
+        villain_stack = min((p.get("stack", float("inf")) for p in non_hero_players), default=0)
+
+        pot_size = GLOBAL_STATE.get("pot_size", 0)
+        big_blind = GLOBAL_STATE["big_blind"]
+        last_villain_bet = max((p.get("last_bet", 0) for p in non_hero_players), default=0)
+        if last_villain_bet <= big_blind:
+            last_villain_bet = 0
+
+        multiway = len(active_players) > 2
+        last_bet = max((p.get("last_bet", 0) for p in active_players), default=0)
+
+        current_board_length = len(GLOBAL_STATE.get("community_cards", ""))
+        current_button_seat = GLOBAL_STATE.get("button_seat", None)
+        current_villain_bet = last_villain_bet
+
+        if current_board_length != self.last_board_length or current_button_seat != self.last_button_seat:
+            GLOBAL_STATE["raises"] = 0
+        elif last_bet > getattr(self, "last_total_bet", 0):
+            GLOBAL_STATE["raises"] += 1
+
+        self.last_total_bet = last_bet
+        self.last_villain_bet = current_villain_bet
+        self.last_board_length = current_board_length
+        self.last_button_seat = current_button_seat
+        raises = GLOBAL_STATE["raises"]
+
+        postflop_street = (
+            "N/A" if board_length == 0
+            else "flop" if board_length == 3
+            else "turn" if board_length == 4
+            else "river" if board_length >= 5
+            else "unknown"
+        )
+
+        position_order = ["sb", "bb", "utg-1", "utg", "utg+1", "utg+2", "lj", "hj", "co", "btn"]
+        hero_position_str = GLOBAL_STATE.get("hero_position", "").lower()
+        hero_position = position_order.index(hero_position_str) + 1 if hero_position_str in position_order else 1
+
+        hero_seat = next((p.get("seat") for p in active_players if p.get("is_hero")), None)
+        villain = max(non_hero_players, key=lambda p: p.get("last_bet", 0), default=None)
+        button_seat = GLOBAL_STATE.get("button_seat")
+
+        if hero_seat and villain and button_seat:
+            villain_seat = villain["seat"]
+            seat_order = [(button_seat + i - 1) % 10 + 1 for i in range(1, 11)]
+            hero_index = seat_order.index(hero_seat)
+            villain_index = seat_order.index(villain_seat)
+            GLOBAL_STATE["in_position"] = hero_index > villain_index
+        else:
+            GLOBAL_STATE["in_position"] = False
+
+        args = (
+            street, hero_stack, villain_stack, pot_size, raises, last_bet,
+            big_blind, multiway, postflop_street, hero_position, GLOBAL_STATE["in_position"]
+        )
+
+        if getattr(self, "last_bet_sizer_args", None) != args:
+            spr, bet_size = calculate_spr_and_bet(*args)
+            GLOBAL_STATE["spr"] = f"{spr:.2f}"
+            GLOBAL_STATE["bet_size"] = bet_size
+            self.last_bet_sizer_args = args
+            self.update_dynamic_labels()
+            print(f'📏 Bet Sizer Updated: SPR={spr:.2f}, Bet Size={bet_size}')
 
     def on_calculator_change(self):
         try:
@@ -369,7 +601,6 @@ class FoundryOverlay(QMainWindow):
                 return
 
             board_strs = [expand(board_raw[i:i + 2]) for i in range(0, len(board_raw), 2)]
-            logging.info(f"Board strings: {board_strs}")
 
             if any(card is None for card in board_strs):
                 logging.warning(f"Invalid board cards: {board_strs}")
@@ -615,6 +846,9 @@ class FoundryOverlay(QMainWindow):
                     p["position"] = needed_positions[i]
 
         hero_position = next((p["position"] for p in players if p.get("isHero")), "Unknown")
+        # ✅ Update GLOBAL_STATE
+        GLOBAL_STATE["hero_position"] = hero_position.lower()
+
         return hero_position.lower()
 
     def display_opponent_hands(self, hands):
