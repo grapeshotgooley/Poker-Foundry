@@ -4,6 +4,9 @@
 [![Watch the video](https://img.youtube.com/vi/TnOleSkJUdI/0.jpg)](https://www.youtube.com/watch?v=TnOleSkJUdI)
 ---
 
+## ❌ Be Advised
+While this tool is a fantastic mental, game theory, and coding exercise, the dynamic nature of its modules is not in alignment with the terms of use of PokerNow. That is to say use of this tool in a real setting is -currently- consider cheating, so don't do it. Instead use this tool with your friends for fun as a way to learn better poker without real money involvement and to better understand RTA tools you might have to face against.  
+
 ## ⚙️ Features
 
 ### 🧠 Foundry Engine

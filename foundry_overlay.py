@@ -1,4 +1,6 @@
 import sys
+import json
+import os
 import logging
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QHBoxLayout, QLabel, QWidget, QVBoxLayout, QSizePolicy,
@@ -55,6 +57,13 @@ GLOBAL_STATE = {
 class FoundryOverlay(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # ✅ Reset player_stats.json on startup
+        stats_path = "./player_data/player_stats.json"
+        os.makedirs(os.path.dirname(stats_path), exist_ok=True)
+        with open(stats_path, "w") as f:
+            json.dump({"players": {}}, f, indent=2)
+
         self.last_suggestion_args = None
         self.last_revealed_hands = {}
         self.last_villain_bet = 0
@@ -269,9 +278,15 @@ class FoundryOverlay(QMainWindow):
         stats_layout = QVBoxLayout()
 
         self.player_selector = QComboBox()
-        self.player_selector.addItems([f"Player {i}" for i in range(1, 9)])
+        #self.player_selector.addItems([f"Player {i}" for i in range(1, 9)])
+        with open('./player_data/player_stats.json', 'r') as f:
+            player_stats = json.load(f)["players"]
+            self.player_selector.clear()
+            self.player_selector.addItems(player_stats.keys())
         self.player_selector.setStyleSheet("font-size: 18px; padding: 8px; background-color: white; border: 2px solid black;")
         self.player_selector.currentTextChanged.connect(lambda text: GLOBAL_STATE.update({"selected_player": text}))
+        self.player_selector.currentTextChanged.connect(self.on_player_selected)
+
         stats_layout.addWidget(self.player_selector)
 
         for stat in GLOBAL_STATE["stats"].keys():
@@ -437,12 +452,81 @@ class FoundryOverlay(QMainWindow):
         else:
             logging.warning("Could not determine button seat.")
 
+    def on_player_selected(self, name):
+        try:
+            with open('./player_data/player_stats.json', 'r') as f:
+                player_stats = json.load(f)["players"]
+            stats = player_stats.get(name.upper(), {})
+            for stat, label in self.dynamic_labels.items():
+                stat_key = stat.upper().replace("_", "")
+                if stat_key in stats:
+                    num = stats[stat_key]["num"]
+                    den = stats[stat_key]["den"]
+                    pct = round(num / den, 2) if den > 0 else 0.0
+                    label.setText(f"{pct} ({num}/{den})")
+        except Exception as e:
+            logging.error(f"Failed to load stats for {name}: {e}")
+
     def handle_active_players(self, players):
-        if isinstance(players, list):
+        try:
+            if not isinstance(players, list):
+                return
+
             GLOBAL_STATE["active_players"] = players
-            #logging.info("Updated active players:")
-            #for p in players:
-            #    logging.info(p)
+
+            stats_path = "./player_data/player_stats.json"
+            player_stats = {"players": {}}
+
+            # Load existing stats safely
+            if os.path.exists(stats_path):
+                try:
+                    with open(stats_path, "r") as f:
+                        player_stats = json.load(f)
+                except Exception as e:
+                    logging.error(f"Failed to load player_stats.json: {e}")
+
+            for p in players:
+                name = p.get("name", "").strip().upper()
+
+                # ✅ Only add real player names (not fallback "SEAT X")
+                if not name or name.startswith("SEAT "):
+                    continue
+
+                if name not in player_stats["players"]:
+                    player_stats["players"][name] = {
+                        "VPIP": {"num": 0, "den": 0},
+                        "PFR": {"num": 0, "den": 0},
+                        "3B": {"num": 0, "den": 0},
+                        "F3B": {"num": 0, "den": 0},
+                        "CBF": {"num": 0, "den": 0},
+                        "WTSD": {"num": 0, "den": 0}
+                    }
+
+            os.makedirs(os.path.dirname(stats_path), exist_ok=True)
+            with open(stats_path, "w") as f:
+                json.dump(player_stats, f, indent=2)
+
+            if hasattr(self, "player_selector"):
+                current = self.player_selector.currentText()
+                new_players = sorted(player_stats["players"].keys())
+
+                # Only update if the player list has changed
+                if set(new_players) != set(
+                        self.player_selector.itemText(i) for i in range(self.player_selector.count())):
+                    self.player_selector.blockSignals(True)
+                    self.player_selector.clear()
+                    self.player_selector.addItems(new_players)
+                    # Restore selection if still valid
+                    if current in new_players:
+                        self.player_selector.setCurrentText(current)
+                        GLOBAL_STATE["selected_player"] = current
+                    else:
+                        self.player_selector.setCurrentIndex(0)
+                        GLOBAL_STATE["selected_player"] = self.player_selector.currentText()
+                    self.player_selector.blockSignals(False)
+
+        except Exception as e:
+            logging.error(f"Error in handle_active_players: {e}")
 
     def extract_pot_size(self):
         js = """

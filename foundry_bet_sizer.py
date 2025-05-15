@@ -63,7 +63,7 @@ def calculate_spr_and_bet(street, hero_stack, villain_stack, pot_size, raises, l
             bet_size = big_blind * truncated_normal((lower + upper) / 2, lower, upper)
         else:
             if raises >= 3:  # 5-bet
-                return spr, round(min(hero_stack, last_villain_bet))  # Min-click or jam
+                return spr, round(min(hero_stack, 2*last_villain_bet))  # Min-click or jam
             elif raises == 2:  # 4-bet
                 lower, upper = (2.2, 3.2)
                 if not in_position:

@@ -1,4 +1,6 @@
 import sys
+import json
+import os
 import logging
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QHBoxLayout, QLabel, QWidget, QVBoxLayout, QSizePolicy,
@@ -24,10 +26,19 @@ GLOBAL_STATE = {
     "special_hand_enabled": False,
     "special_hand_value": "",
     "suited_only": False,
+    "hero_hand": "",
+    "raises": 0,
+    "hero_position": "",
+    "button_seat": None,
+    "hero_stack": 0.0,
+    "pot_size": 0.0,
+    "big_blind": 0.0,
+    "active_players": [],
     "calculator_input": "",
     "top_top": False,
     "nuts": False,
     "selected_player": "",
+    "community_cards": "",
     "stats": {
         "VPIP": "0.0",
         "PFR": "0.0",
@@ -36,8 +47,8 @@ GLOBAL_STATE = {
         "CBF": "0.0",
         "WTSD": "0.0"
     },
-    "win_percent": ".000",
-    "tie_percent": ".000",
+    "win_percent": "0.00",
+    "tie_percent": "0.00",
     "suggestion": "FOLD",
     "spr": "0.0",
     "bet_size": "0"
@@ -46,8 +57,19 @@ GLOBAL_STATE = {
 class FoundryOverlay(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # ✅ Reset player_stats.json on startup
+        stats_path = "./player_data/player_stats.json"
+        os.makedirs(os.path.dirname(stats_path), exist_ok=True)
+        with open(stats_path, "w") as f:
+            json.dump({"players": {}}, f, indent=2)
+
         self.last_suggestion_args = None
         self.last_revealed_hands = {}
+        self.last_villain_bet = 0
+        self.last_board_length = 0
+        self.last_button_seat = None
+        self.last_total_bet = 0
 
         screen = QApplication.primaryScreen().geometry()
         screen_width, screen_height = screen.width(), screen.height()
@@ -275,7 +297,7 @@ class FoundryOverlay(QMainWindow):
         # Polling Timer
         self.timer = QTimer()
         self.timer.timeout.connect(self.poll_game_state)
-        self.timer.start(300)  # every .3 seconds
+        self.timer.start(500)  # every .5 seconds
 
     def poll_game_state(self):
         js_code_hand = """
@@ -292,24 +314,476 @@ class FoundryOverlay(QMainWindow):
         })()
         """
 
-        def handle_hand_result(hand):
+        def handle_hand_result(hero_hand):
             self.browser.page().runJavaScript(self.get_players_js(),
-                                              lambda players: self.display_hero_hand(hand, players))
+                                              lambda players: self.display_hero_hand(hero_hand, players)
+                                              )
             self.browser.page().runJavaScript(self.get_revealed_opponent_js(), self.display_opponent_hands)
+            self.browser.page().runJavaScript(self.get_community_cards_js(), self.handle_community_cards)
+            self.browser.page().runJavaScript(self.get_hero_stack_js(), self.handle_hero_stack)
+            self.browser.page().runJavaScript(self.get_big_blind_js(), self.handle_big_blind_result)
+            self.browser.page().runJavaScript(self.get_button_seat_js(), self.handle_button_seat)
 
         self.browser.page().runJavaScript(js_code_hand, handle_hand_result)
+        self.check_game_type()
+        self.update_bet_sizer()
+        self.get_active_players_js()
+        self.extract_pot_size()
+
+    def handle_hero_stack(self, result):
+        try:
+            stack = float(result.replace(',', '')) if result else 0.0
+            GLOBAL_STATE["hero_stack"] = stack
+        except Exception as e:
+            logging.error(f"Error parsing hero stack: {e}")
+
+    def disable_modules(self):
+        self.special_hand_checkbox.setEnabled(False)
+        self.special_hand_input.setEnabled(False)
+        self.suited_checkbox.setEnabled(False)
+        self.calculator_input.setEnabled(False)
+        self.top_top_checkbox.setEnabled(False)
+        self.nuts_checkbox.setEnabled(False)
+        self.player_selector.setEnabled(False)
+
+    def enable_modules(self):
+        self.special_hand_checkbox.setEnabled(True)
+        self.special_hand_input.setEnabled(self.special_hand_checkbox.isChecked())
+        self.suited_checkbox.setEnabled(self.special_hand_checkbox.isChecked())
+        self.calculator_input.setEnabled(True)
+        self.top_top_checkbox.setEnabled(True)
+        self.nuts_checkbox.setEnabled(True)
+        self.player_selector.setEnabled(True)
+
+    def get_big_blind_js(self):
+        return """
+        (() => {
+            const values = document.querySelectorAll('div span.normal-value');
+            if (values.length >= 2) {
+                return parseFloat(values[1].innerText.trim());
+            }
+            return null;
+        })()
+        """
+
+    def get_button_seat_js(self):
+        return """
+        (() => {
+            const btn = document.querySelector('.dealer-button-ctn');
+            if (!btn) return null;
+            const match = btn.className.match(/dealer-position-(\\d+)/);
+            return match ? parseInt(match[1]) : null;
+        })()
+        """
+
+    def get_active_players_js(self):
+        js = """
+        (() => {
+            const results = [];
+            const players = document.querySelectorAll('.table-player');
+            players.forEach((playerDiv, idx) => {
+                const classList = playerDiv.className;
+                const folded = classList.includes('fold');
+                if (folded) return;
+
+                const isHero = classList.includes('you-player');
+                const seatMatch = classList.match(/table-player-(\\d+)/);
+                const seat = seatMatch ? parseInt(seatMatch[1]) : idx + 1;
+
+                const nameTag = playerDiv.querySelector('.table-player-name a');
+                const name = nameTag ? nameTag.innerText.trim() : `Seat ${seat}`;
+
+                const stackTag = playerDiv.querySelector('.table-player-stack .normal-value');
+                const stack = stackTag ? parseFloat(stackTag.innerText.trim()) : 0.0;
+
+                const betTag = playerDiv.querySelector('.table-player-bet-value .normal-value');
+                const lastBet = betTag ? parseFloat(betTag.innerText.trim()) : 0.0;
+
+                results.push({
+                    name,
+                    seat,
+                    stack,
+                    last_bet: lastBet,
+                    is_hero: isHero
+                });
+            });
+            return results;
+        })()
+        """
+        self.browser.page().runJavaScript(js, self.handle_active_players)
+
+    def get_hero_stack_js(self):
+        return """
+        (() => {
+            const stackEl = document.querySelector('.table-player.you-player .table-player-stack .normal-value');
+            return stackEl ? stackEl.innerText.trim() : '';
+        })()
+        """
+
+    def check_game_type(self):
+        js = """
+        (() => {
+            const typeSpan = document.querySelector('.game-type-ctn .current-type');
+            return typeSpan ? typeSpan.innerText.trim() : '';
+        })()
+        """
+
+        def handle_game_type(result):
+            if result and result != "NLH":
+                self.warning_label.setText(f"❌ Wrong game type: {result}")
+                self.disable_modules()
+            elif result == "NLH":
+                self.warning_label.setText("")
+                self.enable_modules()
+            # else: result is empty → no game loaded yet, do nothing
+
+        self.browser.page().runJavaScript(js, handle_game_type)
+
+    def handle_button_seat(self, seat_number):
+        if seat_number is not None:
+            GLOBAL_STATE["button_seat"] = seat_number
+            #logging.info(f"Button is at seat {seat_number}")
+        else:
+            logging.warning("Could not determine button seat.")
+
+    def handle_active_players(self, players):
+        try:
+            if not isinstance(players, list):
+                return
+
+            GLOBAL_STATE["active_players"] = players
+
+            stats_path = "./player_data/player_stats.json"
+            player_stats = {"players": {}}
+
+            # Load existing stats safely
+            if os.path.exists(stats_path):
+                try:
+                    with open(stats_path, "r") as f:
+                        player_stats = json.load(f)
+                except Exception as e:
+                    logging.error(f"Failed to load player_stats.json: {e}")
+
+            for p in players:
+                name = p.get("name", "").strip().upper()
+
+                # ✅ Only add real player names (not fallback "SEAT X")
+                if not name or name.startswith("SEAT "):
+                    continue
+
+                if name not in player_stats["players"]:
+                    player_stats["players"][name] = {
+                        "VPIP": {"num": 0, "den": 0},
+                        "PFR": {"num": 0, "den": 0},
+                        "3B": {"num": 0, "den": 0},
+                        "F3B": {"num": 0, "den": 0},
+                        "CBF": {"num": 0, "den": 0},
+                        "WTSD": {"num": 0, "den": 0}
+                    }
+
+            os.makedirs(os.path.dirname(stats_path), exist_ok=True)
+            with open(stats_path, "w") as f:
+                json.dump(player_stats, f, indent=2)
+
+        except Exception as e:
+            logging.error(f"Error in handle_active_players: {e}")
+
+    def extract_pot_size(self):
+        js = """
+        (() => {
+            const el = document.querySelector('.table-pot-size .main-value .normal-value');
+            return el ? el.innerText.trim() : null;
+        })()
+        """
+
+        def handle_pot_size(value):
+            try:
+                if value is not None:
+                    GLOBAL_STATE["pot_size"] = float(value)
+                   # print(f"Pot Size: {GLOBAL_STATE['pot_size']}")
+                else:
+                    GLOBAL_STATE["pot_size"] = 0.0
+                  #  print("Pot Size not found.")
+            except Exception as e:
+                logging.error(f"Error extracting pot size: {e}")
+                GLOBAL_STATE["pot_size"] = 0.0
+
+        self.browser.page().runJavaScript(js, handle_pot_size)
+
+    def handle_big_blind_result(self, result):
+        if result is not None:
+            GLOBAL_STATE["big_blind"] = float(result)
+           # print(f"Big Blind set to: {GLOBAL_STATE['big_blind']}")
+        else:
+            logging.warning("Big Blind value not found.")
+
+    def update_bet_sizer(self):
+        # --- Safe expand helper ---
+        VALID_RANKS = {"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
+        VALID_SUITS = {"C", "D", "H", "S"}
+
+        def expand(card_str):
+            if len(card_str) == 3 and card_str.startswith("10"):
+                rank = "10"
+                suit = card_str[2]
+            elif len(card_str) == 2:
+                rank = '10' if card_str[0] == 'T' else card_str[0]
+                suit = card_str[1]
+            else:
+                return None
+            rank = rank.upper()
+            suit = suit.upper()
+            if rank not in VALID_RANKS or suit not in VALID_SUITS:
+                return None
+            return rank + suit
+
+        # --- Parse board ---
+        board_raw = GLOBAL_STATE.get("community_cards", "").upper()
+        if len(board_raw) % 2 != 0:
+            return
+
+        board_strs = [expand(board_raw[i:i + 2]) for i in range(0, len(board_raw), 2)]
+        if any(card is None for card in board_strs):
+            return
+
+        board = [Card(s) for s in board_strs]
+        board_length = len(board)
+        street = "preflop" if board_length == 0 else "postflop"
+
+        hero_stack = GLOBAL_STATE.get('hero_stack', 0.0)
+        active_players = GLOBAL_STATE.get("active_players", [])
+        non_hero_players = [p for p in active_players if not p.get("is_hero")]
+        villain_stack = min((p.get("stack", float("inf")) for p in non_hero_players), default=0)
+
+        pot_size = GLOBAL_STATE.get("pot_size", 0)
+        big_blind = GLOBAL_STATE["big_blind"]
+        last_villain_bet = max((p.get("last_bet", 0) for p in non_hero_players), default=0)
+        if last_villain_bet <= big_blind:
+            last_villain_bet = 0
+
+        multiway = len(active_players) > 2
+        last_bet = max((p.get("last_bet", 0) for p in active_players), default=0)
+
+        current_board_length = len(GLOBAL_STATE.get("community_cards", ""))
+        current_button_seat = GLOBAL_STATE.get("button_seat", None)
+        current_villain_bet = last_villain_bet
+
+        if current_board_length != self.last_board_length or current_button_seat != self.last_button_seat:
+            GLOBAL_STATE["raises"] = 0
+        elif last_bet > getattr(self, "last_total_bet", 0):
+            GLOBAL_STATE["raises"] += 1
+
+        self.last_total_bet = last_bet
+        self.last_villain_bet = current_villain_bet
+        self.last_board_length = current_board_length
+        self.last_button_seat = current_button_seat
+        raises = GLOBAL_STATE["raises"]
+
+        postflop_street = (
+            "N/A" if board_length == 0
+            else "flop" if board_length == 3
+            else "turn" if board_length == 4
+            else "river" if board_length >= 5
+            else "unknown"
+        )
+
+        position_order = ["sb", "bb", "utg-1", "utg", "utg+1", "utg+2", "lj", "hj", "co", "btn"]
+        hero_position_str = GLOBAL_STATE.get("hero_position", "").lower()
+        hero_position = position_order.index(hero_position_str) + 1 if hero_position_str in position_order else 1
+
+        hero_seat = next((p.get("seat") for p in active_players if p.get("is_hero")), None)
+        villain = max(non_hero_players, key=lambda p: p.get("last_bet", 0), default=None)
+        button_seat = GLOBAL_STATE.get("button_seat")
+
+        if hero_seat and villain and button_seat:
+            villain_seat = villain["seat"]
+            seat_order = [(button_seat + i - 1) % 10 + 1 for i in range(1, 11)]
+            hero_index = seat_order.index(hero_seat)
+            villain_index = seat_order.index(villain_seat)
+            GLOBAL_STATE["in_position"] = hero_index > villain_index
+        else:
+            GLOBAL_STATE["in_position"] = False
+
+        args = (
+            street, hero_stack, villain_stack, pot_size, raises, last_bet,
+            big_blind, multiway, postflop_street, hero_position, GLOBAL_STATE["in_position"]
+        )
+
+        if getattr(self, "last_bet_sizer_args", None) != args:
+            spr, bet_size = calculate_spr_and_bet(*args)
+            GLOBAL_STATE["spr"] = f"{spr:.2f}"
+            GLOBAL_STATE["bet_size"] = bet_size
+            self.last_bet_sizer_args = args
+            self.update_dynamic_labels()
+            print(f'📏 Bet Sizer Updated: SPR={spr:.2f}, Bet Size={bet_size}')
 
     def on_calculator_change(self):
-        # Generate random float percentages (0.000 to 1.000)
-        win = round(random.uniform(0, 1), 3)
-        tie = round(random.uniform(0, 1), 3)
+        try:
+            # --- Safe expand helper ---
+            VALID_RANKS = {"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
+            VALID_SUITS = {"C", "D", "H", "S"}
 
-        # Format as string with 3 decimal places
-        GLOBAL_STATE["win_percent"] = f"{win:.3f}"
-        GLOBAL_STATE["tie_percent"] = f"{tie:.3f}"
+            def expand(card_str):
+                if len(card_str) == 3 and card_str.startswith("10"):
+                    rank = "10"
+                    suit = card_str[2]
+                elif len(card_str) == 2:
+                    rank = '10' if card_str[0] == 'T' else card_str[0]
+                    suit = card_str[1]
+                else:
+                    return None
+                rank = rank.upper()
+                suit = suit.upper()
+                if rank not in VALID_RANKS or suit not in VALID_SUITS:
+                    return None
+                return rank + suit
 
-        self.update_dynamic_labels()
-        print("calculator change")
+            # --- Parse board ---
+            board_raw = GLOBAL_STATE.get("community_cards", "").upper()
+            if len(board_raw) % 2 != 0:
+                logging.warning(f"Invalid community card string: '{board_raw}'")
+                return
+
+            board_strs = [expand(board_raw[i:i + 2]) for i in range(0, len(board_raw), 2)]
+
+            if any(card is None for card in board_strs):
+                logging.warning(f"Invalid board cards: {board_strs}")
+                GLOBAL_STATE["win_percent"] = "0.00"
+                GLOBAL_STATE["tie_percent"] = "0.00"
+                self.update_dynamic_labels()
+                return
+
+            board = [Card(s) for s in board_strs]
+
+            # --- Suit setup for override logic ---
+            suits_on_board = [s[-1] for s in board_strs if s]
+            all_suits = ["C", "D", "H", "S"]
+            suit_counts = {s: suits_on_board.count(s) for s in all_suits}
+            least_used_suits = sorted(suit_counts.items(), key=lambda x: x[1])
+            min_count = least_used_suits[0][1]
+            least_suits = [s for s, count in least_used_suits if count == min_count]
+
+            def pick_least_used_suit(exclude=None):
+                import random
+                choices = [s for s in least_suits if s != exclude] if exclude else least_suits
+                return random.choice(choices) if choices else random.choice(all_suits)
+
+            villain_strs = None  # default
+
+            # --- Nuts override ---
+            if self.nuts_checkbox.isChecked():
+                logging.info("Nuts mode enabled for villain")
+
+                if board_strs:
+                    try:
+                        best_hole = best_possible_hole_cards(board_strs)
+                        if best_hole:
+                            villain_strs = [best_hole[0].__str__().upper(), best_hole[1].__str__().upper()]
+                            logging.info(f"Best possible villain hole cards: {villain_strs}")
+                        else:
+                            raise ValueError("best_hole was None")
+                    except Exception as e:
+                        logging.warning(f"Nuts fallback due to error: {e}")
+                        villain_strs = [
+                            'A' + pick_least_used_suit(),
+                            'A' + pick_least_used_suit()
+                        ]
+                else:
+                    villain_strs = [
+                        'A' + pick_least_used_suit(),
+                        'A' + pick_least_used_suit()
+                    ]
+                logging.info(f"Overriding villain hand with NUTS: {villain_strs}")
+
+
+            # --- Top-Top override ---
+            elif self.top_top_checkbox.isChecked():
+                logging.info("Top-Top mode enabled for villain")
+
+                if board_strs:
+                    rank_order = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+                    board_ranks = [card[:-1] for card in board_strs]
+
+                    if "A" in board_ranks:
+                        chosen_suit = pick_least_used_suit()
+                        villain_strs = [
+                            'A' + chosen_suit,
+                            'K' + chosen_suit
+                        ]
+                        logging.info(f"Top-Top override with AK suited: {villain_strs}")
+                    else:
+                        top_rank = max(board_ranks, key=lambda r: rank_order.index(r))
+                        villain_strs = [
+                            'A' + pick_least_used_suit(),
+                            top_rank + pick_least_used_suit(exclude='A')
+                        ]
+                        logging.info(f"Top-Top override with A + top board rank: {villain_strs}")
+                else:
+                    villain_strs = [
+                        'A' + pick_least_used_suit(),
+                        'A' + pick_least_used_suit()
+                    ]
+                    logging.info(f"Top-Top override default AA: {villain_strs}")
+
+            # --- Manual calculator input fallback ---
+            if villain_strs is None:
+                raw = GLOBAL_STATE.get("calculator_input", "").upper()
+                if len(raw) != 4:
+                    logging.warning(f"Invalid calculator input length: '{raw}'")
+                    return
+
+                v1, v2 = raw[:2], raw[2:4]
+                villain_strs = [expand(v1), expand(v2)]
+                logging.info(f"Villain strings from input: {villain_strs}")
+
+            # --- Final validation ---
+            if None in villain_strs:
+                logging.warning(f"Invalid villain card detected: {villain_strs}")
+                GLOBAL_STATE["win_percent"] = "0.00"
+                GLOBAL_STATE["tie_percent"] = "0.00"
+                self.update_dynamic_labels()
+                return
+
+            villain = [Card(s) for s in villain_strs]
+
+            # --- Hero parsing ---
+            hero_cards = GLOBAL_STATE.get("hero_hand", [])
+            if not isinstance(hero_cards, list) or len(hero_cards) != 2:
+                logging.warning(f"Invalid hero_hand in GLOBAL_STATE: '{hero_cards}'")
+                return
+
+            hero_strs = [expand(hero_cards[0]), expand(hero_cards[1])]
+            if None in hero_strs:
+                logging.warning(f"Invalid hero cards: {hero_strs}")
+                return
+
+            hero = [Card(s) for s in hero_strs]
+
+            # --- Evaluation ---
+            win = get_hero_win_rate(hero, villain, board)
+            tie = get_hero_tie_rate(hero, villain, board)
+
+            GLOBAL_STATE["win_percent"] = f"{win * 100:.2f}"
+            GLOBAL_STATE["tie_percent"] = f"{tie * 100:.2f}"
+
+            self.update_dynamic_labels()
+            print("calculator change")
+
+        except Exception as e:
+            logging.error(f"Error in on_calculator_change: {e}")
+
+    def get_community_cards_js(self):
+        return """
+        (() => {
+            const cards = document.querySelectorAll('.table-cards.run-1 .card');
+            const result = [...cards].map(card => {
+                const val = card.querySelector('.value')?.innerText.trim() || "";
+                const suit = card.querySelector('.suit')?.innerText.trim() || "";
+                return val + suit;
+            });
+            return result.filter(c => c);
+        })()
+        """
 
     def get_revealed_opponent_js(self):
         return """
@@ -416,6 +890,9 @@ class FoundryOverlay(QMainWindow):
                     p["position"] = needed_positions[i]
 
         hero_position = next((p["position"] for p in players if p.get("isHero")), "Unknown")
+        # ✅ Update GLOBAL_STATE
+        GLOBAL_STATE["hero_position"] = hero_position.lower()
+
         return hero_position.lower()
 
     def display_opponent_hands(self, hands):
@@ -451,6 +928,23 @@ class FoundryOverlay(QMainWindow):
 
             except Exception as e:
                 logging.error(f"Error processing opponent hand: {e}")
+
+    def handle_community_cards(self, cards):
+        try:
+            def normalize(card):
+                rank, suit = card[:-1], card[-1]
+                rank = 'T' if rank == '10' else rank.upper()
+                suit = suit.upper()
+                return rank + suit
+
+            normalized = [normalize(card) for card in cards]
+            condensed = "".join(normalized)
+
+            if GLOBAL_STATE.get("community_cards") != condensed:
+                GLOBAL_STATE["community_cards"] = condensed
+                self.on_calculator_change()  # ✅ Trigger update
+        except Exception as e:
+            logging.error(f"Error processing community cards: {e}")
 
     def display_hero_hand(self, hand, players):
         if not hand or len(hand) != 2:
@@ -503,6 +997,7 @@ class FoundryOverlay(QMainWindow):
                 result = should_play_hand(*args)
                 suggestion = result.upper()
                 GLOBAL_STATE["suggestion"] = suggestion
+                GLOBAL_STATE["hero_hand"] = [card1.upper(), card2.upper()]
                 self.on_calculator_change()
                 self.update_dynamic_labels()
                 print(f"{condensed_hand} in {pos.upper()} → {suggestion}")
